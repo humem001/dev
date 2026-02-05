@@ -1,0 +1,337 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'Master CloudFormation Template for Serverless AI Agent System'
+
+Parameters:
+  # General Parameters
+  Environment:
+    Type: String
+    Default: 'dev'
+    AllowedValues:
+      - dev
+      - staging
+      - prod
+    Description: 'Environment name'
+  
+  # Cognito Parameters
+  UserPoolName:
+    Type: String
+    Default: 'ai-agent-user-pool'
+    Description: 'Name for the Cognito User Pool'
+  
+  TokenExpirationMinutes:
+    Type: Number
+    Default: 60
+    Description: 'Access token expiration time in minutes'
+    MinValue: 5
+    MaxValue: 1440
+  
+  # VPC Parameters
+  VpcCidr:
+    Type: String
+    Default: '10.0.0.0/16'
+    Description: 'CIDR block for VPC'
+  
+  PrivateSubnet1Cidr:
+    Type: String
+    Default: '10.0.1.0/24'
+    Description: 'CIDR block for Private Subnet 1'
+  
+  PrivateSubnet2Cidr:
+    Type: String
+    Default: '10.0.2.0/24'
+    Description: 'CIDR block for Private Subnet 2'
+  
+  # Lambda Deployment Parameters
+  LambdaCodeBucket:
+    Type: String
+    Description: 'S3 bucket containing Lambda deployment packages'
+  
+  AgentLambdaCodeKey:
+    Type: String
+    Default: 'agent-lambda.zip'
+    Description: 'S3 key for Agent Lambda deployment package'
+  
+  ToolLambdaCodeKey:
+    Type: String
+    Default: 'tool-lambda.zip'
+    Description: 'S3 key for Tool Lambda deployment package'
+  
+  # Bedrock Parameters
+  BedrockModelId:
+    Type: String
+    Default: 'anthropic.claude-3-sonnet-20240229-v1:0'
+    Description: 'Bedrock model ID for Claude 3 Sonnet'
+  
+  # Memory Parameters
+  MemoryName:
+    Type: String
+    Default: 'ai-agent-memory'
+    Description: 'Name for the AgentCore Memory resource'
+  
+  SessionTimeoutMinutes:
+    Type: Number
+    Default: 60
+    Description: 'Session timeout in minutes'
+    MinValue: 5
+    MaxValue: 1440
+  
+  MaxContextTokens:
+    Type: Number
+    Default: 4000
+    Description: 'Maximum context size for memory retrieval'
+  
+  MaxMessagesPerSession:
+    Type: Number
+    Default: 100
+    Description: 'Maximum number of messages per session'
+    MinValue: 10
+    MaxValue: 1000
+  
+  # Gateway Parameters
+  GatewayName:
+    Type: String
+    Default: 'ai-agent-mcp-gateway'
+    Description: 'Name for the AgentCore Gateway'
+
+Metadata:
+  AWS::CloudFormation::Interface:
+    ParameterGroups:
+      - Label:
+          default: 'Environment Configuration'
+        Parameters:
+          - Environment
+      - Label:
+          default: 'Cognito Configuration'
+        Parameters:
+          - UserPoolName
+          - TokenExpirationMinutes
+      - Label:
+          default: 'VPC Configuration'
+        Parameters:
+          - VpcCidr
+          - PrivateSubnet1Cidr
+          - PrivateSubnet2Cidr
+      - Label:
+          default: 'Lambda Deployment'
+        Parameters:
+          - LambdaCodeBucket
+          - AgentLambdaCodeKey
+          - ToolLambdaCodeKey
+      - Label:
+          default: 'Bedrock Configuration'
+        Parameters:
+          - BedrockModelId
+      - Label:
+          default: 'Memory Configuration'
+        Parameters:
+          - MemoryName
+          - SessionTimeoutMinutes
+          - MaxContextTokens
+          - MaxMessagesPerSession
+      - Label:
+          default: 'Gateway Configuration'
+        Parameters:
+          - GatewayName
+
+Resources:
+  # 1. Cognito User Pool (OPTIONAL - Gateway can create its own)
+  # If you plan to use Gateway's "Quick create with Cognito", you can skip this
+  # CognitoStack:
+  #   Type: AWS::CloudFormation::Stack
+  #   Properties:
+  #     TemplateURL: !Sub 'https://${LambdaCodeBucket}.s3.${AWS::Region}.amazonaws.com/cloudformation/cognito.yaml'
+  #     Parameters:
+  #       UserPoolName: !Sub '${UserPoolName}-${Environment}'
+  #       TokenExpirationMinutes: !Ref TokenExpirationMinutes
+  #     Tags:
+  #       - Key: Application
+  #         Value: 'serverless-ai-agent'
+  #       - Key: Environment
+  #         Value: !Ref Environment
+  #       - Key: Component
+  #         Value: 'cognito'
+
+  # 2. VPC and Networking
+  VpcStack:
+    Type: AWS::CloudFormation::Stack
+    Properties:
+      TemplateURL: !Sub 'https://${LambdaCodeBucket}.s3.${AWS::Region}.amazonaws.com/cloudformation/vpc-networking.yaml'
+      Parameters:
+        VpcCidr: !Ref VpcCidr
+        PrivateSubnet1Cidr: !Ref PrivateSubnet1Cidr
+        PrivateSubnet2Cidr: !Ref PrivateSubnet2Cidr
+      Tags:
+        - Key: Application
+          Value: 'serverless-ai-agent'
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Component
+          Value: 'networking'
+
+  # 3. AgentCore Memory
+  # TEMPORARILY DISABLED: AWS::Bedrock::Memory not yet available in CloudFormation
+  # MemoryStack:
+  #   Type: AWS::CloudFormation::Stack
+  #   Properties:
+  #     TemplateURL: !Sub 'https://${LambdaCodeBucket}.s3.${AWS::Region}.amazonaws.com/cloudformation/agentcore-memory.yaml'
+  #     Parameters:
+  #       MemoryName: !Sub '${MemoryName}-${Environment}'
+  #       SessionTimeoutMinutes: !Ref SessionTimeoutMinutes
+  #       MaxMessagesPerSession: !Ref MaxMessagesPerSession
+  #     Tags:
+  #       - Key: Application
+  #         Value: 'serverless-ai-agent'
+  #       - Key: Environment
+  #         Value: !Ref Environment
+  #       - Key: Component
+  #         Value: 'memory'
+
+  # 4. Tool Lambda
+  ToolStack:
+    Type: AWS::CloudFormation::Stack
+    DependsOn: VpcStack
+    Properties:
+      TemplateURL: !Sub 'https://${LambdaCodeBucket}.s3.${AWS::Region}.amazonaws.com/cloudformation/tool-lambda.yaml'
+      Parameters:
+        VpcStackName: !GetAtt VpcStack.Outputs.StackName
+        LambdaCodeBucket: !Ref LambdaCodeBucket
+        LambdaCodeKey: !Ref ToolLambdaCodeKey
+      Tags:
+        - Key: Application
+          Value: 'serverless-ai-agent'
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Component
+          Value: 'tool'
+
+  # 5. AgentCore Gateway
+  # TEMPORARILY DISABLED: AWS::Bedrock::Gateway not yet available in CloudFormation
+  # Must be created manually via AWS Console or CLI
+  # See cloudformation/MANUAL_AGENTCORE_SETUP.md for instructions
+  # GatewayStack:
+  #   Type: AWS::CloudFormation::Stack
+  #   DependsOn:
+  #     - CognitoStack
+  #     - ToolStack
+  #   Properties:
+  #     TemplateURL: !Sub 'https://${LambdaCodeBucket}.s3.${AWS::Region}.amazonaws.com/cloudformation/agentcore-gateway.yaml'
+  #     Parameters:
+  #       CognitoStackName: !GetAtt CognitoStack.Outputs.StackName
+  #       ToolStackName: !GetAtt ToolStack.Outputs.StackName
+  #       GatewayName: !Sub '${GatewayName}-${Environment}'
+  #     Tags:
+  #       - Key: Application
+  #         Value: 'serverless-ai-agent'
+  #       - Key: Environment
+  #         Value: !Ref Environment
+  #       - Key: Component
+  #         Value: 'gateway'
+
+  # 6. Agent Lambda
+  # Note: GatewayUrl, MemoryId, and JWKS URL must be updated manually after creating Gateway
+  # See DEPLOYMENT_GUIDE.md for instructions
+  AgentStack:
+    Type: AWS::CloudFormation::Stack
+    Properties:
+      TemplateURL: !Sub 'https://${LambdaCodeBucket}.s3.${AWS::Region}.amazonaws.com/cloudformation/agent-lambda.yaml'
+      Parameters:
+        CognitoStackName: 'NONE'  # Not using CloudFormation Cognito
+        GatewayUrl: 'PLACEHOLDER'  # Must be updated after manual Gateway creation
+        MemoryId: 'DISABLED'  # Must be updated after manual Memory creation (optional)
+        BedrockModelId: !Ref BedrockModelId
+        LambdaCodeBucket: !Ref LambdaCodeBucket
+        LambdaCodeKey: !Ref AgentLambdaCodeKey
+        SessionTimeoutMinutes: !Ref SessionTimeoutMinutes
+        MaxContextTokens: !Ref MaxContextTokens
+      Tags:
+        - Key: Application
+          Value: 'serverless-ai-agent'
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Component
+          Value: 'agent'
+
+Outputs:
+  # Cognito Outputs (DISABLED - Using Gateway's Cognito instead)
+  # UserPoolId:
+  #   Description: 'Cognito User Pool ID'
+  #   Value: !GetAtt CognitoStack.Outputs.UserPoolId
+  #   Export:
+  #     Name: !Sub '${AWS::StackName}-UserPoolId'
+  # 
+  # UserPoolClientId:
+  #   Description: 'Cognito User Pool Client ID'
+  #   Value: !GetAtt CognitoStack.Outputs.UserPoolClientId
+  #   Export:
+  #     Name: !Sub '${AWS::StackName}-UserPoolClientId'
+  # 
+  # JWKSUrl:
+  #   Description: 'JWKS URL for JWT token validation'
+  #   Value: !GetAtt CognitoStack.Outputs.JWKSUrl
+  #   Export:
+  #     Name: !Sub '${AWS::StackName}-JWKSUrl'
+  
+  # VPC Outputs
+  VpcId:
+    Description: 'VPC ID'
+    Value: !GetAtt VpcStack.Outputs.VpcId
+    Export:
+      Name: !Sub '${AWS::StackName}-VpcId'
+  
+  # Memory Outputs (DISABLED - Memory not available in CloudFormation)
+  # MemoryId:
+  #   Description: 'AgentCore Memory ID'
+  #   Value: !GetAtt MemoryStack.Outputs.MemoryId
+  #   Export:
+  #     Name: !Sub '${AWS::StackName}-MemoryId'
+  
+  # Gateway Outputs (DISABLED - Gateway not available in CloudFormation)
+  # GatewayUrl:
+  #   Description: 'AgentCore Gateway URL'
+  #   Value: !GetAtt GatewayStack.Outputs.GatewayUrl
+  #   Export:
+  #     Name: !Sub '${AWS::StackName}-GatewayUrl'
+  # 
+  # GatewayId:
+  #   Description: 'AgentCore Gateway ID'
+  #   Value: !GetAtt GatewayStack.Outputs.GatewayId
+  #   Export:
+  #     Name: !Sub '${AWS::StackName}-GatewayId'
+  
+  # Lambda Outputs
+  AgentFunctionArn:
+    Description: 'Agent Lambda Function ARN'
+    Value: !GetAtt AgentStack.Outputs.AgentFunctionArn
+    Export:
+      Name: !Sub '${AWS::StackName}-AgentFunctionArn'
+  
+  AgentFunctionName:
+    Description: 'Agent Lambda Function Name'
+    Value: !GetAtt AgentStack.Outputs.AgentFunctionName
+    Export:
+      Name: !Sub '${AWS::StackName}-AgentFunctionName'
+  
+  ToolFunctionArn:
+    Description: 'Tool Lambda Function ARN'
+    Value: !GetAtt ToolStack.Outputs.ToolFunctionArn
+    Export:
+      Name: !Sub '${AWS::StackName}-ToolFunctionArn'
+  
+  ToolFunctionName:
+    Description: 'Tool Lambda Function Name'
+    Value: !GetAtt ToolStack.Outputs.ToolFunctionName
+    Export:
+      Name: !Sub '${AWS::StackName}-ToolFunctionName'
+  
+  # Deployment Information
+  Region:
+    Description: 'AWS Region'
+    Value: !Ref AWS::Region
+  
+  Environment:
+    Description: 'Environment Name'
+    Value: !Ref Environment
+  
+  StackName:
+    Description: 'Master Stack Name'
+    Value: !Ref AWS::StackName

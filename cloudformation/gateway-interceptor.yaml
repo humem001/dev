@@ -1,0 +1,103 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'Gateway Request Interceptor for User Context Propagation'
+
+Parameters:
+  LambdaCodeBucket:
+    Type: String
+    Description: 'S3 bucket containing Lambda deployment package'
+  
+  LambdaCodeKey:
+    Type: String
+    Default: 'gateway-interceptor.zip'
+    Description: 'S3 key for Lambda deployment package'
+
+Resources:
+  # CloudWatch Log Group
+  InterceptorLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub '/aws/lambda/${AWS::StackName}-gateway-interceptor'
+      RetentionInDays: 30
+
+  # IAM Execution Role
+  InterceptorExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: 'sts:AssumeRole'
+      ManagedPolicyArns:
+        - 'arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole'
+      Policies:
+        - PolicyName: CloudWatchLogs
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - 'logs:CreateLogGroup'
+                  - 'logs:CreateLogStream'
+                  - 'logs:PutLogEvents'
+                Resource:
+                  - !GetAtt InterceptorLogGroup.Arn
+
+  # Lambda Function
+  InterceptorFunction:
+    Type: AWS::Lambda::Function
+    DependsOn: InterceptorLogGroup
+    Properties:
+      FunctionName: !Sub '${AWS::StackName}-gateway-interceptor'
+      Description: 'Gateway request interceptor for user context propagation'
+      Runtime: python3.12
+      Handler: gateway_request_interceptor.lambda_handler
+      Role: !GetAtt InterceptorExecutionRole.Arn
+      Code:
+        S3Bucket: !Ref LambdaCodeBucket
+        S3Key: !Ref LambdaCodeKey
+      Timeout: 10
+      MemorySize: 128
+      Environment:
+        Variables:
+          LOG_LEVEL: 'INFO'
+      Tags:
+        - Key: Application
+          Value: 'serverless-ai-agent'
+        - Key: Component
+          Value: 'gateway-interceptor'
+        - Key: Purpose
+          Value: 'user-context-propagation'
+
+Outputs:
+  StackName:
+    Description: 'Interceptor Stack Name'
+    Value: !Ref AWS::StackName
+    Export:
+      Name: !Sub '${AWS::StackName}-StackName'
+  
+  InterceptorFunctionArn:
+    Description: 'Gateway Interceptor Lambda ARN'
+    Value: !GetAtt InterceptorFunction.Arn
+    Export:
+      Name: !Sub '${AWS::StackName}-InterceptorArn'
+  
+  InterceptorFunctionName:
+    Description: 'Gateway Interceptor Lambda Name'
+    Value: !Ref InterceptorFunction
+    Export:
+      Name: !Sub '${AWS::StackName}-InterceptorName'
+  
+  InterceptorLogGroupName:
+    Description: 'Gateway Interceptor Log Group Name'
+    Value: !Ref InterceptorLogGroup
+    Export:
+      Name: !Sub '${AWS::StackName}-InterceptorLogGroupName'
+  
+  InterceptorExecutionRoleArn:
+    Description: 'Gateway Interceptor Execution Role ARN'
+    Value: !GetAtt InterceptorExecutionRole.Arn
+    Export:
+      Name: !Sub '${AWS::StackName}-InterceptorExecutionRoleArn'

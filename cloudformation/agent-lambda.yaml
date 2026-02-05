@@ -1,0 +1,152 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'Agent Lambda for Serverless AI Agent System'
+
+Parameters:
+  CognitoStackName:
+    Type: String
+    Description: 'Name of the Cognito CloudFormation stack'
+  
+  GatewayUrl:
+    Type: String
+    Description: 'AgentCore Gateway URL'
+  
+  MemoryId:
+    Type: String
+    Description: 'AgentCore Memory resource ID'
+  
+  BedrockModelId:
+    Type: String
+    Default: 'anthropic.claude-3-sonnet-20240229-v1:0'
+    Description: 'Bedrock model ID for Claude 3 Sonnet'
+  
+  LambdaCodeBucket:
+    Type: String
+    Description: 'S3 bucket containing Lambda deployment package'
+  
+  LambdaCodeKey:
+    Type: String
+    Default: 'agent-lambda.zip'
+    Description: 'S3 key for Lambda deployment package'
+  
+  SessionTimeoutMinutes:
+    Type: Number
+    Default: 60
+    Description: 'Session timeout in minutes'
+  
+  MaxContextTokens:
+    Type: Number
+    Default: 4000
+    Description: 'Maximum context size for memory retrieval'
+
+Resources:
+  # CloudWatch Log Group
+  AgentLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub '/aws/lambda/${AWS::StackName}-agent'
+      RetentionInDays: 30
+
+  # IAM Execution Role
+  AgentExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      # RoleName removed to allow CloudFormation to generate unique name
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: 'sts:AssumeRole'
+      ManagedPolicyArns:
+        - 'arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole'
+      Policies:
+        - PolicyName: BedrockAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - 'bedrock:InvokeModel'
+                  - 'bedrock:InvokeModelWithResponseStream'
+                Resource:
+                  - !Sub 'arn:aws:bedrock:${AWS::Region}::foundation-model/${BedrockModelId}'
+        - PolicyName: AgentCoreMemoryAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - 'bedrock:CreateMemorySession'
+                  - 'bedrock:GetMemorySession'
+                  - 'bedrock:DeleteMemorySession'
+                  - 'bedrock:PutMemorySessionData'
+                  - 'bedrock:GetMemorySessionData'
+                Resource:
+                  - !Sub 'arn:aws:bedrock:${AWS::Region}:${AWS::AccountId}:memory/${MemoryId}'
+        - PolicyName: CloudWatchLogs
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - 'logs:CreateLogGroup'
+                  - 'logs:CreateLogStream'
+                  - 'logs:PutLogEvents'
+                Resource:
+                  - !GetAtt AgentLogGroup.Arn
+
+  # Lambda Function
+  AgentFunction:
+    Type: AWS::Lambda::Function
+    DependsOn: AgentLogGroup
+    Properties:
+      FunctionName: !Sub '${AWS::StackName}-agent'
+      Runtime: python3.12
+      Handler: agent.lambda_handler.lambda_handler
+      Role: !GetAtt AgentExecutionRole.Arn
+      Code:
+        S3Bucket: !Ref LambdaCodeBucket
+        S3Key: !Ref LambdaCodeKey
+      Timeout: 60
+      MemorySize: 512
+      Environment:
+        Variables:
+          COGNITO_JWKS_URL: 'PLACEHOLDER'  # Must be updated after Gateway creation
+          COGNITO_ISSUER_URL: 'PLACEHOLDER'  # Must be updated after Gateway creation
+          BEDROCK_MODEL_ID: !Ref BedrockModelId
+          AGENTCORE_GATEWAY_URL: !Ref GatewayUrl
+          AGENTCORE_MEMORY_ID: !Ref MemoryId
+          SESSION_TIMEOUT_MINUTES: !Ref SessionTimeoutMinutes
+          MAX_CONTEXT_TOKENS: !Ref MaxContextTokens
+          LOG_LEVEL: 'INFO'
+      Tags:
+        - Key: Application
+          Value: 'serverless-ai-agent'
+        - Key: Component
+          Value: 'agent'
+
+Outputs:
+  AgentFunctionArn:
+    Description: 'Agent Lambda Function ARN'
+    Value: !GetAtt AgentFunction.Arn
+    Export:
+      Name: !Sub '${AWS::StackName}-AgentFunctionArn'
+  
+  AgentFunctionName:
+    Description: 'Agent Lambda Function Name'
+    Value: !Ref AgentFunction
+    Export:
+      Name: !Sub '${AWS::StackName}-AgentFunctionName'
+  
+  AgentExecutionRoleArn:
+    Description: 'Agent Lambda Execution Role ARN'
+    Value: !GetAtt AgentExecutionRole.Arn
+    Export:
+      Name: !Sub '${AWS::StackName}-AgentExecutionRoleArn'
+  
+  AgentLogGroupName:
+    Description: 'Agent Lambda Log Group Name'
+    Value: !Ref AgentLogGroup
+    Export:
+      Name: !Sub '${AWS::StackName}-AgentLogGroupName'
